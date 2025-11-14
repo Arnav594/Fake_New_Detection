@@ -56,12 +56,12 @@ print(f"Total samples: {len(df_clean)}")
 print(f"Label mapping: {dict(zip(le.classes_, le.transform(le.classes_)))}")
 
 # ==================== CELL 4: Choose Training Approach ====================
-# You can choose between:
-# OPTION A: Separate models for Statement and Body
-# OPTION B: Combined text (Statement + Body)
-# OPTION C: Multi-input model (processes both separately, then combines)
+# TRAINING_MODE options:
+# - 'SEPARATE': Train models on Statement and Body independently (24 models total)
+# - 'COMBINED': Combine Statement + Body into single text (12 models total)
+# - 'MULTI_INPUT': Advanced model with separate LSTM branches (3 models total)
 
-TRAINING_MODE = 'SEPARATE'  # Change to 'COMBINED' or 'MULTI_INPUT'
+TRAINING_MODE = 'MULTI_INPUT'  # Change this as needed
 
 print(f"Training Mode: {TRAINING_MODE}")
 print("\nAvailable options:")
@@ -69,9 +69,9 @@ print("- 'SEPARATE': Train models on Statement and Body independently")
 print("- 'COMBINED': Combine Statement + Body into single text")
 print("- 'MULTI_INPUT': Advanced model with separate LSTM branches for each column")
 
-# ==================== CELL 5: Tokenization Setup ====================
-max_words = 50000
-max_len = 300
+# ==================== CELL 5: Optimized Tokenization Setup ====================
+max_words = 30000  # Reduced from 50000 for faster training
+max_len = 200      # Reduced from 300 - still captures most text
 
 if TRAINING_MODE == 'SEPARATE':
     # Create separate tokenizers
@@ -124,7 +124,7 @@ elif TRAINING_MODE == 'COMBINED':
     print(f"Combined sequences shape: {X_train_seq.shape}")
 
 elif TRAINING_MODE == 'MULTI_INPUT':
-    # Multi-input approach (same as SEPARATE for data prep)
+    # Multi-input approach
     tokenizer_statement = Tokenizer(num_words=max_words, oov_token='<OOV>')
     tokenizer_body = Tokenizer(num_words=max_words, oov_token='<OOV>')
     
@@ -149,77 +149,109 @@ elif TRAINING_MODE == 'MULTI_INPUT':
     print(f"Statement sequences shape: {X_train_stmt_seq.shape}")
     print(f"Body sequences shape: {X_train_body_seq.shape}")
 
-# ==================== CELL 6: Model Architectures ====================
+# ==================== CELL 5.5: GPU Performance Optimization ====================
+import tensorflow as tf
+
+# Check GPU availability
+print("\n🔍 GPU Detection:")
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    print(f"✅ GPU Found: {gpus[0].name}")
+    print(f"   Device: {tf.test.gpu_device_name()}")
+    
+    # Enable memory growth
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print("✅ GPU memory growth enabled")
+    except RuntimeError as e:
+        print(f"⚠️ Memory growth setting failed: {e}")
+else:
+    print("⚠️ No GPU detected - training will be slower!")
+
+# Enable mixed precision for 2-3x speedup on GPU
+from tensorflow.keras import mixed_precision
+mixed_precision.set_global_policy('mixed_float16')
+print("✅ Mixed precision training enabled (2-3x faster on GPU)")
+
+print("\n📊 Optimization Summary:")
+print(f"   - Max sequence length: {max_len}")
+print(f"   - Vocabulary size: {max_words}")
+print(f"   - Mixed precision: ENABLED")
+print(f"   - Expected speedup: 2-3x faster than default")
+
+# ==================== CELL 6: Optimized Model Architectures ====================
 def create_model_v1(input_shape):
-    """Deep BiLSTM with ReLU"""
+    """Optimized BiLSTM with ReLU"""
     model = Sequential([
-        Embedding(max_words, 256, input_length=input_shape),
-        Bidirectional(LSTM(256, return_sequences=True, dropout=0.3, recurrent_dropout=0.2)),
-        Bidirectional(LSTM(128, return_sequences=True, dropout=0.3, recurrent_dropout=0.2)),
-        Bidirectional(LSTM(64, dropout=0.3, recurrent_dropout=0.2)),
-        Dense(128, activation='relu'),
-        BatchNormalization(),
-        Dropout(0.4),
+        Embedding(max_words, 128, input_length=input_shape),
+        Bidirectional(LSTM(128, dropout=0.3, recurrent_dropout=0.2)),
         Dense(64, activation='relu'),
+        BatchNormalization(),
         Dropout(0.3),
-        Dense(1, activation='sigmoid')
+        Dense(1, activation='sigmoid', dtype='float32')  # float32 for mixed precision
     ])
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
+    model.compile(
+        optimizer=Adam(learning_rate=0.001), 
+        loss='binary_crossentropy', 
+        metrics=['accuracy']
+    )
     return model
 
 def create_model_v2(input_shape):
-    """Deep BiLSTM with ELU"""
+    """Optimized BiLSTM with ELU"""
     model = Sequential([
-        Embedding(max_words, 256, input_length=input_shape),
-        Bidirectional(LSTM(256, return_sequences=True, dropout=0.3, recurrent_dropout=0.2)),
+        Embedding(max_words, 128, input_length=input_shape),
         Bidirectional(LSTM(128, dropout=0.3, recurrent_dropout=0.2)),
-        Dense(128, activation='elu'),
-        BatchNormalization(),
-        Dropout(0.4),
         Dense(64, activation='elu'),
+        BatchNormalization(),
         Dropout(0.3),
-        Dense(1, activation='sigmoid')
+        Dense(1, activation='sigmoid', dtype='float32')
     ])
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
+    model.compile(
+        optimizer=Adam(learning_rate=0.001), 
+        loss='binary_crossentropy', 
+        metrics=['accuracy']
+    )
     return model
 
 def create_model_v3(input_shape):
-    """Deep BiLSTM with LeakyReLU"""
+    """Optimized BiLSTM with LeakyReLU"""
     from tensorflow.keras.layers import LeakyReLU
     model = Sequential([
-        Embedding(max_words, 256, input_length=input_shape),
-        Bidirectional(LSTM(256, return_sequences=True, dropout=0.3, recurrent_dropout=0.2)),
-        Bidirectional(LSTM(128, return_sequences=True, dropout=0.3, recurrent_dropout=0.2)),
-        Bidirectional(LSTM(64, dropout=0.3, recurrent_dropout=0.2)),
-        Dense(128),
-        LeakyReLU(alpha=0.1),
-        BatchNormalization(),
-        Dropout(0.4),
+        Embedding(max_words, 128, input_length=input_shape),
+        Bidirectional(LSTM(128, dropout=0.3, recurrent_dropout=0.2)),
         Dense(64),
         LeakyReLU(alpha=0.1),
+        BatchNormalization(),
         Dropout(0.3),
-        Dense(1, activation='sigmoid')
+        Dense(1, activation='sigmoid', dtype='float32')
     ])
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
+    model.compile(
+        optimizer=Adam(learning_rate=0.001), 
+        loss='binary_crossentropy', 
+        metrics=['accuracy']
+    )
     return model
 
 def create_model_v4(input_shape):
-    """Deep BiLSTM with SELU"""
+    """Optimized BiLSTM with SELU"""
     model = Sequential([
-        Embedding(max_words, 256, input_length=input_shape),
-        Bidirectional(LSTM(256, return_sequences=True, dropout=0.3, recurrent_dropout=0.2)),
+        Embedding(max_words, 128, input_length=input_shape),
         Bidirectional(LSTM(128, dropout=0.3, recurrent_dropout=0.2)),
-        Dense(128, activation='selu'),
-        Dropout(0.4),
         Dense(64, activation='selu'),
         Dropout(0.3),
-        Dense(1, activation='sigmoid')
+        Dense(1, activation='sigmoid', dtype='float32')
     ])
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
+    model.compile(
+        optimizer=Adam(learning_rate=0.001), 
+        loss='binary_crossentropy', 
+        metrics=['accuracy']
+    )
     return model
 
 def create_multi_input_model():
-    """Multi-input model with separate branches"""
+    """Optimized Multi-input model with separate branches"""
     # Statement branch
     input_stmt = Input(shape=(max_len,), name='statement_input')
     emb_stmt = Embedding(max_words, 128, input_length=max_len)(input_stmt)
@@ -237,13 +269,17 @@ def create_multi_input_model():
     drop1 = Dropout(0.4)(bn)
     dense2 = Dense(64, activation='relu')(drop1)
     drop2 = Dropout(0.3)(dense2)
-    output = Dense(1, activation='sigmoid')(drop2)
+    output = Dense(1, activation='sigmoid', dtype='float32')(drop2)
     
     model = Model(inputs=[input_stmt, input_body], outputs=output)
     model.compile(optimizer=Adam(learning_rate=0.001), loss='binary_crossentropy', metrics=['accuracy'])
     return model
 
-print("✓ Model architectures defined!")
+print("✓ Optimized model architectures defined!")
+print("  - Single BiLSTM layer (faster than 3-layer deep models)")
+print("  - Embedding dimension: 128")
+print("  - Hidden units: 128")
+print("  - Expected training time: ~7-10 min per model")
 
 # ==================== CELL 7: Training Configuration ====================
 model_creators = [create_model_v1, create_model_v2, create_model_v3, create_model_v4]
@@ -252,21 +288,38 @@ model_names = ['BiLSTM_ReLU', 'BiLSTM_ELU', 'BiLSTM_LeakyReLU', 'BiLSTM_SELU']
 results = []
 histories = []
 
-# Callbacks
-early_stop = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
-reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=2, min_lr=0.00001)
+# Optimized callbacks
+early_stop = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True, verbose=1)
+reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=2, min_lr=0.00001, verbose=1)
 
-print("Training Configuration:")
-print(f"- Number of architectures: {len(model_creators)}")
-print(f"- Runs per architecture: 5")
-print(f"- Total models to train: {len(model_creators) * 5}")
-print(f"- Epochs per model: 12")
-print(f"- Training mode: {TRAINING_MODE}")
+print("="*80)
+print("OPTIMIZED TRAINING CONFIGURATION")
+print("="*80)
+print(f"Training mode: {TRAINING_MODE}")
+print(f"Number of architectures: {len(model_creators)}")
+print(f"Runs per architecture: 3")
+
+if TRAINING_MODE == 'SEPARATE':
+    print(f"Total models to train: {len(model_creators) * 3 * 2} (Statement + Body)")
+elif TRAINING_MODE == 'COMBINED':
+    print(f"Total models to train: {len(model_creators) * 3}")
+else:
+    print(f"Total models to train: 3")
+
+print(f"Epochs per model: 10 (with early stopping)")
+print(f"Batch size: 256 (optimized for GPU)")
+print(f"Sequence length: {max_len}")
+print(f"Expected total time: ~3 hours (with T4 GPU)")
+print("="*80)
 
 # ==================== CELL 8: Training Loop ====================
-print("="*80)
+import time
+
+print("\n" + "="*80)
 print(f"STARTING TRAINING - {TRAINING_MODE} MODE")
 print("="*80)
+
+training_start_time = time.time()
 
 if TRAINING_MODE == 'SEPARATE':
     # Train on Statement
@@ -274,23 +327,27 @@ if TRAINING_MODE == 'SEPARATE':
     print("TRAINING ON STATEMENT COLUMN")
     print("="*80)
     for idx, (model_creator, model_name) in enumerate(zip(model_creators, model_names)):
-        for run in range(5):
+        for run in range(3):  # 3 runs per architecture
+            model_start_time = time.time()
+            
             print(f"\n{'='*80}")
-            print(f"Statement - {model_name} - Run {run+1}/5 (Model {idx*5 + run + 1}/20)")
+            print(f"Statement - {model_name} - Run {run+1}/3 (Model {idx*3 + run + 1}/12)")
             print(f"{'='*80}")
             
             model = model_creator(max_len)
             history = model.fit(
                 X_train_stmt_seq, y_train,
                 validation_split=0.2,
-                epochs=12,
-                batch_size=64,
+                epochs=10,
+                batch_size=256,
                 callbacks=[early_stop, reduce_lr],
                 verbose=1
             )
             
             test_loss, test_acc = model.evaluate(X_test_stmt_seq, y_test, verbose=0)
             y_pred = (model.predict(X_test_stmt_seq, verbose=0) > 0.5).astype(int)
+            
+            model_time = time.time() - model_start_time
             
             results.append({
                 'data_source': 'Statement',
@@ -300,7 +357,8 @@ if TRAINING_MODE == 'SEPARATE':
                 'test_accuracy': test_acc,
                 'test_loss': test_loss,
                 'final_train_acc': history.history['accuracy'][-1],
-                'final_val_acc': history.history['val_accuracy'][-1]
+                'final_val_acc': history.history['val_accuracy'][-1],
+                'training_time_min': model_time / 60
             })
             
             histories.append({
@@ -308,30 +366,35 @@ if TRAINING_MODE == 'SEPARATE':
                 'history': history.history
             })
             
-            print(f"\nResults: Test Accuracy: {test_acc:.4f}, Test Loss: {test_loss:.4f}")
+            print(f"\n✓ Results: Test Accuracy: {test_acc:.4f}, Test Loss: {test_loss:.4f}")
+            print(f"✓ Training time: {model_time/60:.1f} minutes")
     
     # Train on Body
     print("\n" + "="*80)
     print("TRAINING ON BODY COLUMN")
     print("="*80)
     for idx, (model_creator, model_name) in enumerate(zip(model_creators, model_names)):
-        for run in range(5):
+        for run in range(3):
+            model_start_time = time.time()
+            
             print(f"\n{'='*80}")
-            print(f"Body - {model_name} - Run {run+1}/5 (Model {idx*5 + run + 21}/40)")
+            print(f"Body - {model_name} - Run {run+1}/3 (Model {idx*3 + run + 13}/24)")
             print(f"{'='*80}")
             
             model = model_creator(max_len)
             history = model.fit(
                 X_train_body_seq, y_train,
                 validation_split=0.2,
-                epochs=12,
-                batch_size=64,
+                epochs=10,
+                batch_size=256,
                 callbacks=[early_stop, reduce_lr],
                 verbose=1
             )
             
             test_loss, test_acc = model.evaluate(X_test_body_seq, y_test, verbose=0)
             y_pred = (model.predict(X_test_body_seq, verbose=0) > 0.5).astype(int)
+            
+            model_time = time.time() - model_start_time
             
             results.append({
                 'data_source': 'Body',
@@ -341,7 +404,8 @@ if TRAINING_MODE == 'SEPARATE':
                 'test_accuracy': test_acc,
                 'test_loss': test_loss,
                 'final_train_acc': history.history['accuracy'][-1],
-                'final_val_acc': history.history['val_accuracy'][-1]
+                'final_val_acc': history.history['val_accuracy'][-1],
+                'training_time_min': model_time / 60
             })
             
             histories.append({
@@ -349,27 +413,32 @@ if TRAINING_MODE == 'SEPARATE':
                 'history': history.history
             })
             
-            print(f"\nResults: Test Accuracy: {test_acc:.4f}, Test Loss: {test_loss:.4f}")
+            print(f"\n✓ Results: Test Accuracy: {test_acc:.4f}, Test Loss: {test_loss:.4f}")
+            print(f"✓ Training time: {model_time/60:.1f} minutes")
 
 elif TRAINING_MODE == 'COMBINED':
     for idx, (model_creator, model_name) in enumerate(zip(model_creators, model_names)):
-        for run in range(5):
+        for run in range(3):
+            model_start_time = time.time()
+            
             print(f"\n{'='*80}")
-            print(f"Combined - {model_name} - Run {run+1}/5 (Model {idx*5 + run + 1}/20)")
+            print(f"Combined - {model_name} - Run {run+1}/3 (Model {idx*3 + run + 1}/12)")
             print(f"{'='*80}")
             
             model = model_creator(max_len)
             history = model.fit(
                 X_train_seq, y_train,
                 validation_split=0.2,
-                epochs=12,
-                batch_size=64,
+                epochs=10,
+                batch_size=256,
                 callbacks=[early_stop, reduce_lr],
                 verbose=1
             )
             
             test_loss, test_acc = model.evaluate(X_test_seq, y_test, verbose=0)
             y_pred = (model.predict(X_test_seq, verbose=0) > 0.5).astype(int)
+            
+            model_time = time.time() - model_start_time
             
             results.append({
                 'data_source': 'Combined',
@@ -379,7 +448,8 @@ elif TRAINING_MODE == 'COMBINED':
                 'test_accuracy': test_acc,
                 'test_loss': test_loss,
                 'final_train_acc': history.history['accuracy'][-1],
-                'final_val_acc': history.history['val_accuracy'][-1]
+                'final_val_acc': history.history['val_accuracy'][-1],
+                'training_time_min': model_time / 60
             })
             
             histories.append({
@@ -387,26 +457,31 @@ elif TRAINING_MODE == 'COMBINED':
                 'history': history.history
             })
             
-            print(f"\nResults: Test Accuracy: {test_acc:.4f}, Test Loss: {test_loss:.4f}")
+            print(f"\n✓ Results: Test Accuracy: {test_acc:.4f}, Test Loss: {test_loss:.4f}")
+            print(f"✓ Training time: {model_time/60:.1f} minutes")
 
 elif TRAINING_MODE == 'MULTI_INPUT':
-    for run in range(5):
+    for run in range(3):
+        model_start_time = time.time()
+        
         print(f"\n{'='*80}")
-        print(f"Multi-Input Model - Run {run+1}/5")
+        print(f"Multi-Input Model - Run {run+1}/3")
         print(f"{'='*80}")
         
         model = create_multi_input_model()
         history = model.fit(
             [X_train_stmt_seq, X_train_body_seq], y_train,
             validation_split=0.2,
-            epochs=12,
-            batch_size=64,
+            epochs=10,
+            batch_size=256,
             callbacks=[early_stop, reduce_lr],
             verbose=1
         )
         
         test_loss, test_acc = model.evaluate([X_test_stmt_seq, X_test_body_seq], y_test, verbose=0)
         y_pred = (model.predict([X_test_stmt_seq, X_test_body_seq], verbose=0) > 0.5).astype(int)
+        
+        model_time = time.time() - model_start_time
         
         results.append({
             'data_source': 'Multi-Input',
@@ -416,7 +491,8 @@ elif TRAINING_MODE == 'MULTI_INPUT':
             'test_accuracy': test_acc,
             'test_loss': test_loss,
             'final_train_acc': history.history['accuracy'][-1],
-            'final_val_acc': history.history['val_accuracy'][-1]
+            'final_val_acc': history.history['val_accuracy'][-1],
+            'training_time_min': model_time / 60
         })
         
         histories.append({
@@ -424,10 +500,14 @@ elif TRAINING_MODE == 'MULTI_INPUT':
             'history': history.history
         })
         
-        print(f"\nResults: Test Accuracy: {test_acc:.4f}, Test Loss: {test_loss:.4f}")
+        print(f"\n✓ Results: Test Accuracy: {test_acc:.4f}, Test Loss: {test_loss:.4f}")
+        print(f"✓ Training time: {model_time/60:.1f} minutes")
+
+training_total_time = time.time() - training_start_time
 
 print("\n" + "="*80)
 print("✓ ALL TRAINING COMPLETE!")
+print(f"✓ Total training time: {training_total_time/3600:.2f} hours ({training_total_time/60:.1f} minutes)")
 print("="*80)
 
 # ==================== CELL 9: Results Analysis ====================
@@ -444,12 +524,14 @@ print("="*80)
 if TRAINING_MODE == 'SEPARATE':
     summary = results_df.groupby(['data_source', 'architecture']).agg({
         'test_accuracy': ['mean', 'std', 'max'],
-        'test_loss': ['mean', 'std', 'min']
+        'test_loss': ['mean', 'std', 'min'],
+        'training_time_min': 'mean'
     }).round(4)
 else:
     summary = results_df.groupby('architecture').agg({
         'test_accuracy': ['mean', 'std', 'max'],
-        'test_loss': ['mean', 'std', 'min']
+        'test_loss': ['mean', 'std', 'min'],
+        'training_time_min': 'mean'
     }).round(4)
 print(summary)
 
@@ -465,10 +547,11 @@ if 'data_source' in best_model_info:
     print(f"Data Source: {best_model_info['data_source']}")
 print(f"Test Accuracy: {best_model_info['test_accuracy']:.4f}")
 print(f"Test Loss: {best_model_info['test_loss']:.4f}")
+print(f"Training Time: {best_model_info['training_time_min']:.1f} minutes")
 
 # Save results
-results_df.to_csv('training_results.csv', index=False)
-print("\n✓ Results saved to 'training_results.csv'")
+results_df.to_csv('training_results_optimized.csv', index=False)
+print("\n✓ Results saved to 'training_results_optimized.csv'")
 
 # ==================== CELL 10: Visualizations ====================
 # Plot 1: Accuracy comparison
@@ -480,26 +563,30 @@ if TRAINING_MODE == 'SEPARATE':
     x = np.arange(len(stmt_results))
     width = 0.35
     
-    plt.bar(x - width/2, stmt_results['test_accuracy'], width, label='Statement', alpha=0.8)
-    plt.bar(x + width/2, body_results['test_accuracy'], width, label='Body', alpha=0.8)
-    plt.xlabel('Model Run')
-    plt.ylabel('Test Accuracy')
-    plt.title('Test Accuracy: Statement vs Body')
-    plt.legend()
+    plt.bar(x - width/2, stmt_results['test_accuracy'].values, width, label='Statement', alpha=0.8, color='#4ECDC4')
+    plt.bar(x + width/2, body_results['test_accuracy'].values, width, label='Body', alpha=0.8, color='#FF6B6B')
+    plt.xlabel('Model Run', fontsize=12)
+    plt.ylabel('Test Accuracy', fontsize=12)
+    plt.title('Test Accuracy Comparison: Statement vs Body', fontsize=14, fontweight='bold')
+    plt.xticks(x, [f"{stmt_results.iloc[i]['architecture']}\nRun{stmt_results.iloc[i]['run']}" 
+                   for i in range(len(stmt_results))], rotation=45, ha='right')
+    plt.legend(fontsize=11)
+    plt.grid(True, alpha=0.3, axis='y')
 else:
     x = range(len(results_df))
-    plt.bar(x, results_df['test_accuracy'], alpha=0.7, edgecolor='black')
+    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A'] * 3
+    plt.bar(x, results_df['test_accuracy'], alpha=0.7, edgecolor='black', color=colors[:len(results_df)])
     plt.axhline(y=results_df['test_accuracy'].mean(), color='red', linestyle='--', 
                 linewidth=2, label=f'Mean: {results_df["test_accuracy"].mean():.4f}')
-    plt.xlabel('Model Run')
-    plt.ylabel('Test Accuracy')
-    plt.title(f'Test Accuracy Across All Runs ({TRAINING_MODE} Mode)')
-    plt.legend()
+    plt.xlabel('Model Run', fontsize=12)
+    plt.ylabel('Test Accuracy', fontsize=12)
+    plt.title(f'Test Accuracy Across All Runs ({TRAINING_MODE} Mode)', fontsize=14, fontweight='bold')
+    plt.xticks(x, [f"M{i+1}" for i in x], rotation=45)
+    plt.legend(fontsize=11)
 
-plt.xticks(rotation=45, ha='right')
 plt.grid(True, alpha=0.3, axis='y')
 plt.tight_layout()
-plt.savefig('accuracy_comparison.png', dpi=300, bbox_inches='tight')
+plt.savefig('accuracy_comparison_optimized.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 # Plot 2: Best model training history
@@ -507,46 +594,46 @@ best_history = next(h for h in histories if h['model'] == best_model_info['model
 plt.figure(figsize=(14, 5))
 
 plt.subplot(1, 2, 1)
-plt.plot(best_history['history']['accuracy'], label='Train', linewidth=2)
-plt.plot(best_history['history']['val_accuracy'], label='Validation', linewidth=2)
-plt.title(f'Best Model: {best_model_info["model"]}\nAccuracy Over Epochs')
-plt.xlabel('Epoch')
-plt.ylabel('Accuracy')
-plt.legend()
+plt.plot(best_history['history']['accuracy'], label='Train', linewidth=2, marker='o')
+plt.plot(best_history['history']['val_accuracy'], label='Validation', linewidth=2, marker='s')
+plt.title(f'Best Model: {best_model_info["model"]}\nAccuracy Over Epochs', fontsize=12, fontweight='bold')
+plt.xlabel('Epoch', fontsize=11)
+plt.ylabel('Accuracy', fontsize=11)
+plt.legend(fontsize=10)
 plt.grid(True, alpha=0.3)
 
 plt.subplot(1, 2, 2)
-plt.plot(best_history['history']['loss'], label='Train', linewidth=2)
-plt.plot(best_history['history']['val_loss'], label='Validation', linewidth=2)
-plt.title('Loss Over Epochs')
-plt.xlabel('Epoch')
-plt.ylabel('Loss')
-plt.legend()
+plt.plot(best_history['history']['loss'], label='Train', linewidth=2, marker='o')
+plt.plot(best_history['history']['val_loss'], label='Validation', linewidth=2, marker='s')
+plt.title('Loss Over Epochs', fontsize=12, fontweight='bold')
+plt.xlabel('Epoch', fontsize=11)
+plt.ylabel('Loss', fontsize=11)
+plt.legend(fontsize=10)
 plt.grid(True, alpha=0.3)
 
 plt.tight_layout()
-plt.savefig('best_model_training.png', dpi=300, bbox_inches='tight')
+plt.savefig('best_model_training_optimized.png', dpi=300, bbox_inches='tight')
 plt.show()
 
 # Plot 3: Architecture comparison boxplot
 if TRAINING_MODE != 'MULTI_INPUT':
     plt.figure(figsize=(12, 6))
     if TRAINING_MODE == 'SEPARATE':
-        results_df.boxplot(column='test_accuracy', by=['data_source', 'architecture'], figsize=(14, 6))
-        plt.xticks(rotation=45, ha='right')
+        import seaborn as sns
+        sns.boxplot(data=results_df, x='architecture', y='test_accuracy', hue='data_source', palette='Set2')
+        plt.xticks(rotation=30, ha='right')
+        plt.title('Test Accuracy Distribution by Architecture and Data Source', fontsize=14, fontweight='bold')
     else:
         results_df.boxplot(column='test_accuracy', by='architecture', figsize=(12, 6))
         plt.xticks(rotation=30, ha='right')
+        plt.title('Test Accuracy Distribution by Architecture', fontsize=14, fontweight='bold')
+        plt.suptitle('')
     
-    plt.title('Test Accuracy Distribution')
-    plt.suptitle('')
-    plt.ylabel('Test Accuracy')
-    plt.tight_layout()
-    plt.savefig('architecture_boxplot.png', dpi=300, bbox_inches='tight')
+    plt.ylabel('Test Accuracy', fontsize=12)
+    plt.xlabel('Architecture', fontsize=12)
     plt.show()
-
-print("\n✓ All visualizations saved!")
-
+    
+    
 # ==================== CELL 11: Final Summary ====================
 print("\n" + "="*80)
 print("📊 FINAL SUMMARY")
